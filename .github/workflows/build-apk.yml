@@ -27,7 +27,13 @@ jobs:
       # Genera le cartelle di piattaforma mancanti (non sovrascrive i file
       # Android già presenti nel repo: manifest, splash, stili).
       - name: Crea progetto Android
-        run: flutter create --org it.img2pdf --project-name img2pdf --platforms android .
+        run: |
+          flutter create --org it.img2pdf --project-name img2pdf --platforms android .
+          rm -f test/widget_test.dart
+          # receive_sharing_intent richiede compileSdk 37
+          sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 37/' android/app/build.gradle.kts
+          grep -n "compileSdk" android/app/build.gradle.kts
+          echo "android.suppressUnsupportedCompileSdk=37" >> android/gradle.properties
 
       - run: flutter pub get
 
