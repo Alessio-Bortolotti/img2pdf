@@ -1,0 +1,29 @@
+name: img2pdf
+description: Crea PDF a partire da immagini, interamente in locale.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # Selezione immagini e salvataggio file (nessuna rete)
+  file_picker: '>=8.0.0 <11.0.0'
+  # Elaborazione immagini in puro Dart: ritaglio, rotazione, resize, filtri
+  image: ^4.2.0
+  # Generazione PDF in puro Dart
+  pdf: ^3.11.0
+  # Anteprima PDF, stampa e condivisione (rendering locale)
+  printing: ^5.13.0
+  # Ricezione immagini condivise da altre app (Android)
+  receive_sharing_intent: ^1.8.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
