@@ -71,6 +71,23 @@ class PdfBuilder {
   /// Risoluzione usata per "Come l'immagine": 150 dpi.
   static const double _fitDpi = 150;
 
+  /// Formato della pagina che conterrà [im] con le impostazioni [s].
+  static PdfPageFormat pageFormatFor(RenderedImage im, PdfSettings s) {
+    final margin = s.marginMm * PdfPageFormat.mm;
+    final base = s.size.format;
+    if (base == null) {
+      final w = im.width * 72 / _fitDpi;
+      final h = im.height * 72 / _fitDpi;
+      return PdfPageFormat(w + 2 * margin, h + 2 * margin);
+    }
+    final landscape = switch (s.orientation) {
+      PageOrientationOption.auto => im.width > im.height,
+      PageOrientationOption.portrait => false,
+      PageOrientationOption.landscape => true,
+    };
+    return landscape ? base.landscape : base.portrait;
+  }
+
   static Future<Uint8List> build(
     List<RenderedImage> images,
     PdfSettings s, {
@@ -81,20 +98,7 @@ class PdfBuilder {
 
     for (final im in images) {
       final image = pw.MemoryImage(im.bytes);
-      PdfPageFormat format;
-      final base = s.size.format;
-      if (base == null) {
-        final w = im.width * 72 / _fitDpi;
-        final h = im.height * 72 / _fitDpi;
-        format = PdfPageFormat(w + 2 * margin, h + 2 * margin);
-      } else {
-        final landscape = switch (s.orientation) {
-          PageOrientationOption.auto => im.width > im.height,
-          PageOrientationOption.portrait => false,
-          PageOrientationOption.landscape => true,
-        };
-        format = landscape ? base.landscape : base.portrait;
-      }
+      final format = pageFormatFor(im, s);
 
       doc.addPage(
         pw.Page(

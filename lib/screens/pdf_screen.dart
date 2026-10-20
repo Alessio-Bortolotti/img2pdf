@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
 
 import '../models/edit_params.dart';
@@ -22,10 +23,21 @@ class PdfScreen extends StatefulWidget {
   State<PdfScreen> createState() => _PdfScreenState();
 }
 
+/// Anteprima di una pagina: render reale del PDF (Android/desktop) oppure,
+/// sul web, composizione equivalente dell'immagine nella pagina.
 class _PageImage {
-  const _PageImage(this.png, this.aspect);
-  final Uint8List png;
+  const _PageImage(this.png, this.aspect)
+      : image = null,
+        marginFrac = 0,
+        cover = false;
+  const _PageImage.composed(RenderedImage this.image, this.aspect,
+      this.marginFrac, this.cover)
+      : png = null;
+  final Uint8List? png;
+  final RenderedImage? image;
   final double aspect; // larghezza / altezza
+  final double marginFrac; // margine / larghezza pagina
+  final bool cover;
 }
 
 class _PdfScreenState extends State<PdfScreen> {
@@ -70,6 +82,8 @@ class _PdfScreenState extends State<PdfScreen> {
 
   // ------------------------------------------------------------ generazione
 
+  List<RenderedImage> _lastImages = [];
+
   Future<Uint8List> _buildPdf(PdfSettings s, {void Function(String)? onStatus}) async {
     if (_pdf != null && _pdfSettings == s) return _pdf!;
     final images = <RenderedImage>[];
@@ -86,6 +100,7 @@ class _PdfScreenState extends State<PdfScreen> {
       }
       images.add(r);
     }
+    _lastImages = images;
     onStatus?.call('Creo il PDF…');
     final bytes = await PdfBuilder.build(images, s, title: _fileName);
     if (s == _settings) {
@@ -115,9 +130,17 @@ class _PdfScreenState extends State<PdfScreen> {
         // Risoluzione delle miniature: ~900 px di larghezza.
         final dpi = _previewDpi(s);
         final pages = <_PageImage>[];
-        await for (final r in Printing.raster(bytes, dpi: dpi)) {
-          if (!mounted || id != _gen) return;
-          pages.add(_PageImage(await r.toPng(), r.width / r.height));
+        if (kIsWeb) {
+          for (final im in _lastImages) {
+            final f = PdfBuilder.pageFormatFor(im, s);
+            pages.add(_PageImage.composed(im, f.width / f.height,
+                s.marginMm * PdfPageFormat.mm / f.width, s.fit == FitOption.cover));
+          }
+        } else {
+          await for (final r in Printing.raster(bytes, dpi: dpi)) {
+            if (!mounted || id != _gen) return;
+            pages.add(_PageImage(await r.toPng(), r.width / r.height));
+          }
         }
         if (!mounted || id != _gen) return;
         setState(() {
@@ -366,8 +389,26 @@ class _PdfScreenState extends State<PdfScreen> {
                                 ),
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(6),
-                                  child: Image.memory(pg.png,
-                                      fit: BoxFit.fill, gaplessPlayback: true),
+                                  child: pg.png != null
+                                      ? Image.memory(pg.png!,
+                                          fit: BoxFit.fill, gaplessPlayback: true)
+                                      : LayoutBuilder(
+                                          builder: (context, c) => Padding(
+                                            padding: EdgeInsets.all(
+                                                c.maxWidth * pg.marginFrac),
+                                            child: ClipRect(
+                                              child: Image.memory(
+                                                pg.image!.bytes,
+                                                fit: pg.cover
+                                                    ? BoxFit.cover
+                                                    : BoxFit.contain,
+                                                width: double.infinity,
+                                                height: double.infinity,
+                                                gaplessPlayback: true,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
                                 ),
                               ),
                             ),
