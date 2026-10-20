@@ -44,7 +44,7 @@ class _PdfScreenState extends State<PdfScreen> {
   PdfSettings _settings = const PdfSettings();
   final _nameCtrl = TextEditingController(text: 'documento');
   final Map<String, RenderedImage> _cache = {};
-  final _pageCtrl = PageController(viewportFraction: 0.74);
+  final _pageCtrl = PageController(viewportFraction: 0.6);
 
   Uint8List? _pdf;
   PdfSettings? _pdfSettings;
