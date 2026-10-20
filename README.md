@@ -1,4 +1,6 @@
-# Immagini → PDF (Flutter)
+# FotoPDF
+
+App Flutter per creare PDF dalle immagini.
 
 App che crea un PDF da una o più immagini, **interamente offline**: nessun dato lascia il dispositivo.
 
@@ -15,7 +17,7 @@ App che crea un PDF da una o più immagini, **interamente offline**: nessun dato
 - **Salva**, **condividi** o **stampa** il PDF.
 
 ## Condivisione dalla galleria (Android)
-Da Galleria/Google Foto seleziona una o più immagini → **Condividi** → **Immagini → PDF**. Le immagini vengono aggiunte all'elenco, anche se l'app è già aperta.
+Da Galleria/Google Foto seleziona una o più immagini → **Condividi** → **FotoPDF**. Le immagini vengono aggiunte all'elenco, anche se l'app è già aperta.
 
 ## Ottenere l'APK senza installare nulla (GitHub Actions)
 1. Crea un repository su GitHub (anche privato) e carica il contenuto di questa cartella, inclusa `.github/`.

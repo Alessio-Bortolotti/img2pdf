@@ -46,7 +46,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  /// Immagini condivise da Galleria/Foto/altre app ("Condividi → Immagini → PDF").
+  /// Immagini condivise da Galleria/Foto/altre app ("Condividi → FotoPDF").
   void _listenShares() {
     final rsi = ReceiveSharingIntent.instance;
     // App già aperta
@@ -175,7 +175,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Immagini → PDF'),
+        title: const Text('FotoPDF'),
         actions: [
           if (_items.isNotEmpty)
             IconButton(

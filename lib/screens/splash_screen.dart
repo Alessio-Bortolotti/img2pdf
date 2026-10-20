@@ -176,10 +176,10 @@ class _SplashScreenState extends State<SplashScreen>
         child: Transform.translate(
           offset: Offset(0, 16 * (1 - t)),
           child: const Text(
-            'Immagini → PDF',
+            'FotoPDF',
             style: TextStyle(
               color: Colors.white,
-              fontSize: 28,
+              fontSize: 36,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.3,
             ),

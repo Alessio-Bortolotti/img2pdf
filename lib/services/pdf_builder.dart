@@ -76,7 +76,7 @@ class PdfBuilder {
     PdfSettings s, {
     String title = 'Documento',
   }) {
-    final doc = pw.Document(title: title, creator: 'Immagini → PDF');
+    final doc = pw.Document(title: title, creator: 'FotoPDF');
     final margin = s.marginMm * PdfPageFormat.mm;
 
     for (final im in images) {

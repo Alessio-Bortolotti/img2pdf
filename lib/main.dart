@@ -12,7 +12,7 @@ class Img2PdfApp extends StatelessWidget {
   Widget build(BuildContext context) {
     const seed = Color(0xFF3949AB);
     return MaterialApp(
-      title: 'Immagini → PDF',
+      title: 'FotoPDF',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: seed),
