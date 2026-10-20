@@ -29,8 +29,8 @@ class PdfSettings {
     this.size = PageSizeOption.a4,
     this.orientation = PageOrientationOption.auto,
     this.fit = FitOption.contain,
-    this.marginMm = 10,
-    this.quality = 85,
+    this.marginMm = 5,
+    this.quality = 90,
   });
 
   final PageSizeOption size;
