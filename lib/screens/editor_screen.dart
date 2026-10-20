@@ -5,11 +5,14 @@ import 'package:flutter/material.dart';
 
 import '../models/edit_params.dart';
 import '../services/image_processor.dart';
+import '../theme.dart';
 import '../widgets/crop_editor.dart';
+import '../widgets/ui.dart';
 
 class EditorScreen extends StatefulWidget {
-  const EditorScreen({super.key, required this.item});
+  const EditorScreen({super.key, required this.item, this.initialTab = 0});
   final PageItem item;
+  final int initialTab;
 
   @override
   State<EditorScreen> createState() => _EditorScreenState();
@@ -28,7 +31,7 @@ class _EditorScreenState extends State<EditorScreen> {
   ];
 
   late EditParams _p = widget.item.params;
-  int _tab = 0;
+  late int _tab = widget.initialTab;
   double? _cropAspect;
 
   RenderedImage? _view;
@@ -99,65 +102,102 @@ class _EditorScreenState extends State<EditorScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final dark = ThemeData(
-      brightness: Brightness.dark,
-      colorScheme: ColorScheme.fromSeed(
-          seedColor: Theme.of(context).colorScheme.primary,
-          brightness: Brightness.dark),
-      useMaterial3: true,
-    );
-    return Theme(
-      data: dark,
-      child: Scaffold(
-        backgroundColor: const Color(0xFF111214),
-        appBar: AppBar(
-          backgroundColor: const Color(0xFF111214),
-          leading: IconButton(
-            tooltip: 'Annulla',
-            icon: const Icon(Icons.close),
-            onPressed: () => Navigator.pop(context),
+    return Scaffold(
+      backgroundColor: AppColors.editorBg,
+      body: SafeArea(
+        child: Column(children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 6, 14, 6),
+            child: Row(children: [
+              SquareIconButton(
+                icon: Icons.close_rounded,
+                tooltip: 'Annulla',
+                onTap: () => Navigator.pop(context),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  child: Text(widget.item.name,
+                      textAlign: TextAlign.center,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: AppColors.muted,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500)),
+                ),
+              ),
+              SquareIconButton(
+                icon: Icons.restart_alt_rounded,
+                tooltip: 'Ripristina originale',
+                onTap: () {
+                  _cropAspect = null;
+                  _update(const EditParams());
+                },
+              ),
+              const SizedBox(width: 8),
+              Material(
+                color: AppColors.primaryDeep,
+                borderRadius: BorderRadius.circular(14),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: _apply,
+                  child: const SizedBox(
+                    height: 42,
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(children: [
+                        Icon(Icons.check_rounded, size: 18, color: Colors.white),
+                        SizedBox(width: 6),
+                        Text('Fatto',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 15)),
+                      ]),
+                    ),
+                  ),
+                ),
+              ),
+            ]),
           ),
-          title: Text(widget.item.name, overflow: TextOverflow.ellipsis),
-          actions: [
-            IconButton(
-              tooltip: 'Ripristina originale',
-              icon: const Icon(Icons.restart_alt),
-              onPressed: () {
-                _cropAspect = null;
-                _update(const EditParams());
-              },
-            ),
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: FilledButton.icon(
-                onPressed: _apply,
-                icon: const Icon(Icons.check),
-                label: const Text('Applica'),
+          Expanded(child: _buildCanvas()),
+          SizedBox(
+            height: 2,
+            child: _busy ? const LinearProgressIndicator(minHeight: 2) : null,
+          ),
+          SizedBox(height: 146, child: _buildPanel()),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+            child: Container(
+              height: 80,
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(26),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  for (final (i, icon, label) in const [
+                    (0, Icons.crop_rounded, 'Ritaglia'),
+                    (1, Icons.rotate_right_rounded, 'Ruota'),
+                    (2, Icons.open_in_full_rounded, 'Misura'),
+                    (3, Icons.auto_awesome_outlined, 'Filtri'),
+                    (4, Icons.tune_rounded, 'Regola'),
+                  ])
+                    _ToolTab(
+                      icon: icon,
+                      label: label,
+                      selected: _tab == i,
+                      onTap: () {
+                        setState(() => _tab = i);
+                        _schedule(immediate: true);
+                      },
+                    ),
+                ],
               ),
             ),
-          ],
-        ),
-        body: Column(children: [
-          Expanded(child: _buildCanvas()),
-          if (_busy) const LinearProgressIndicator(minHeight: 2) else const SizedBox(height: 2),
-          SizedBox(height: 150, child: _buildPanel()),
+          ),
         ]),
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: _tab,
-          onDestinationSelected: (i) {
-            setState(() => _tab = i);
-            _schedule(immediate: true);
-          },
-          destinations: const [
-            NavigationDestination(icon: Icon(Icons.crop), label: 'Ritaglia'),
-            NavigationDestination(
-                icon: Icon(Icons.rotate_90_degrees_ccw), label: 'Ruota'),
-            NavigationDestination(
-                icon: Icon(Icons.photo_size_select_large), label: 'Dimensione'),
-            NavigationDestination(icon: Icon(Icons.auto_awesome), label: 'Filtri'),
-            NavigationDestination(icon: Icon(Icons.tune), label: 'Regola'),
-          ],
-        ),
       ),
     );
   }
@@ -219,12 +259,14 @@ class _EditorScreenState extends State<EditorScreen> {
               for (final (label, a) in _aspects)
                 Padding(
                   padding: const EdgeInsets.only(right: 8),
-                  child: ChoiceChip(
-                    label: Text(label),
+                  child: AppChip(
+                    label: label,
                     selected: _cropAspect == a,
-                    onSelected: !ready
+                    selectedColor: Colors.white,
+                    selectedTextColor: AppColors.editorBg,
+                    onTap: !ready
                         ? null
-                        : (_) {
+                        : () {
                             setState(() {
                               _cropAspect = a;
                               if (a != null) {
@@ -240,11 +282,12 @@ class _EditorScreenState extends State<EditorScreen> {
         ),
         const SizedBox(height: 8),
         TextButton.icon(
+          style: TextButton.styleFrom(foregroundColor: AppColors.muted),
           onPressed: () => setState(() {
             _cropAspect = null;
             _p = _p.withoutCrop();
           }),
-          icon: const Icon(Icons.crop_free),
+          icon: const Icon(Icons.crop_free_rounded, size: 18),
           label: const Text('Rimuovi ritaglio'),
         ),
       ],
@@ -272,7 +315,7 @@ class _EditorScreenState extends State<EditorScreen> {
             ],
           ),
           Row(children: [
-            const Icon(Icons.straighten, size: 20),
+            const Icon(Icons.straighten_rounded, size: 20, color: AppColors.muted),
             Expanded(
               child: Slider(
                 value: _p.fineAngle,
@@ -301,11 +344,23 @@ class _EditorScreenState extends State<EditorScreen> {
 
   Widget _toolButton(IconData icon, String tip, VoidCallback onTap,
       {int quarterTurns = 0}) {
-    return IconButton.filledTonal(
-      tooltip: tip,
-      iconSize: 26,
-      onPressed: onTap,
-      icon: RotatedBox(quarterTurns: quarterTurns, child: Icon(icon)),
+    return Tooltip(
+      message: tip,
+      child: Material(
+        color: AppColors.surface2,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: onTap,
+          child: SizedBox(
+            width: 58,
+            height: 50,
+            child: RotatedBox(
+                quarterTurns: quarterTurns,
+                child: Icon(icon, color: AppColors.text, size: 24)),
+          ),
+        ),
+      ),
     );
   }
 
@@ -318,7 +373,7 @@ class _EditorScreenState extends State<EditorScreen> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text('Originale ${item.width}×${item.height} px  →  risultato $ow×$oh px',
-              style: Theme.of(context).textTheme.bodyMedium),
+              style: const TextStyle(color: AppColors.textSoft, fontSize: 13)),
           Slider(
             value: _p.scale,
             min: 0.1,
@@ -331,10 +386,12 @@ class _EditorScreenState extends State<EditorScreen> {
             spacing: 8,
             children: [
               for (final s in const [1.0, 0.75, 0.5, 0.25])
-                ChoiceChip(
-                  label: Text('${(s * 100).round()}%'),
+                AppChip(
+                  label: '${(s * 100).round()}%',
                   selected: (_p.scale - s).abs() < 0.001,
-                  onSelected: (_) => _update(_p.copyWith(scale: s)),
+                  selectedColor: Colors.white,
+                  selectedTextColor: AppColors.editorBg,
+                  onTap: () => _update(_p.copyWith(scale: s)),
                 ),
             ],
           ),
@@ -392,9 +449,15 @@ class _EditorScreenState extends State<EditorScreen> {
     Widget row(IconData icon, String label, double value,
         EditParams Function(double) apply) {
       return Row(children: [
-        Icon(icon, size: 20),
+        Icon(icon, size: 20, color: AppColors.muted),
         const SizedBox(width: 8),
-        SizedBox(width: 84, child: Text(label)),
+        SizedBox(
+            width: 88,
+            child: Text(label,
+                style: const TextStyle(
+                    color: AppColors.textSoft,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600))),
         Expanded(
           child: Slider(
             value: value,
@@ -423,6 +486,49 @@ class _EditorScreenState extends State<EditorScreen> {
           row(Icons.palette_outlined, 'Saturazione', _p.saturation,
               (v) => _p.copyWith(saturation: v)),
         ],
+      ),
+    );
+  }
+}
+
+class _ToolTab extends StatelessWidget {
+  const _ToolTab({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkResponse(
+      onTap: onTap,
+      radius: 36,
+      child: SizedBox(
+        width: 64,
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            width: 48,
+            height: 36,
+            decoration: BoxDecoration(
+              color: selected ? AppColors.primaryDeep : Colors.transparent,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon,
+                size: 22, color: selected ? Colors.white : AppColors.muted),
+          ),
+          const SizedBox(height: 6),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: selected ? Colors.white : AppColors.muted)),
+        ]),
       ),
     );
   }

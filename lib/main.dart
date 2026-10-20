@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'screens/home_screen.dart';
+import 'theme.dart';
 import 'screens/splash_screen.dart';
 
 void main() => runApp(const Img2PdfApp());
@@ -10,19 +11,11 @@ class Img2PdfApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const seed = Color(0xFF3949AB);
     return MaterialApp(
       title: 'FotoPDF',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: seed),
-        useMaterial3: true,
-      ),
-      darkTheme: ThemeData(
-        colorScheme:
-            ColorScheme.fromSeed(seedColor: seed, brightness: Brightness.dark),
-        useMaterial3: true,
-      ),
+      theme: buildAppTheme(),
+      themeMode: ThemeMode.dark,
       home: const SplashScreen(next: HomeScreen()),
     );
   }

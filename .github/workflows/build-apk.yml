@@ -25,10 +25,10 @@ jobs:
           cache: true
 
       # Genera le cartelle di piattaforma mancanti (non sovrascrive i file
-      # Android già presenti nel repo: manifest, splash, stili).
-      - name: Crea progetto Android
+      # Android già presenti nel repo: manifest, splash, stili, icone).
+      - name: Crea progetto Android e web
         run: |
-          flutter create --org it.img2pdf --project-name img2pdf --platforms android .
+          flutter create --org it.img2pdf --project-name img2pdf --platforms android,web .
           rm -f test/widget_test.dart
           # receive_sharing_intent richiede compileSdk 37
           sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 37/' android/app/build.gradle.kts
@@ -51,29 +51,44 @@ jobs:
           name: img2pdf-apk
           path: build/app/outputs/flutter-apk/app-release.apk
 
-      # Copia dell'APK nel ramo "apk" (scaricabile anche senza artefatti).
-      - name: Pubblica APK nel ramo apk
+      # Versione web dimostrativa (solo per gli screenshot di verifica).
+      - name: Compila demo web
+        continue-on-error: true
         run: |
-          cp build/app/outputs/flutter-apk/app-release.apk /tmp/img2pdf.apk
+          set -o pipefail
+          flutter build web --release --dart-define=DEMO=true --no-web-resources-cdn 2>&1 | tee web.log
+
+      - name: Pubblica APK e demo nei rami dedicati
+        run: |
           git config user.name "ci"
           git config user.email "ci@users.noreply.github.com"
-          git checkout --orphan apk
-          git rm -rf --cached . -q
+          cp build/app/outputs/flutter-apk/app-release.apk /tmp/img2pdf.apk
+          [ -d build/web ] && cp -r build/web /tmp/web || true
+          git checkout -q --orphan apk
+          git rm -rfq --cached .
           cp /tmp/img2pdf.apk img2pdf.apk
           git add -f img2pdf.apk
-          git commit -m "APK build ${{ github.run_number }}"
-          git push -f origin apk
+          git commit -qm "APK build ${{ github.run_number }}"
+          git push -qf origin apk
+          if [ -d /tmp/web ]; then
+            git checkout -q --orphan web-demo
+            git rm -rfq --cached .
+            mkdir -p /tmp/wd && cp -r /tmp/web/. /tmp/wd/
+            git --work-tree=/tmp/wd add -f -A
+            git --work-tree=/tmp/wd commit -qm "Demo web ${{ github.run_number }}"
+            git push -qf origin web-demo
+          fi
 
-      # In caso di errore pubblica i log nel ramo "ci-logs" per poterli leggere.
+      # Log sempre pubblicati nel ramo "ci-logs".
       - name: Pubblica log
-        if: failure()
+        if: always()
         run: |
-          mkdir -p /tmp/ci && cp analyze.log build.log /tmp/ci/ 2>/dev/null || true
+          mkdir -p /tmp/ci && cp analyze.log build.log web.log /tmp/ci/ 2>/dev/null || true
           git config user.name "ci"
           git config user.email "ci@users.noreply.github.com"
-          git checkout --orphan ci-logs
-          git rm -rf --cached . -q
-          cp /tmp/ci/*.log . 2>/dev/null || true
-          git add -f *.log
-          git commit -m "Log build ${{ github.run_number }}"
-          git push -f origin ci-logs
+          git checkout -q -f --orphan ci-logs
+          git rm -rfq --cached . || true
+          mkdir -p /tmp/cil && cp /tmp/ci/*.log /tmp/cil/ 2>/dev/null || true
+          git --work-tree=/tmp/cil add -f -A
+          git --work-tree=/tmp/cil commit -qm "Log build ${{ github.run_number }}"
+          git push -qf origin ci-logs

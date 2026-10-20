@@ -1,7 +1,7 @@
-import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 
 import '../models/edit_params.dart';
@@ -23,11 +23,15 @@ class RenderedImage {
 /// Tutta l'elaborazione avviene in locale, in un isolate separato
 /// per non bloccare l'interfaccia.
 class ImageProcessor {
+  /// Esegue il lavoro in un isolate separato (sul web, nello stesso thread).
+  static Future<R> _run<R>(R Function() job) => compute(_exec<R>, job);
+  static R _exec<R>(R Function() job) => job();
+
   static const int previewMaxSide = 1400;
 
   /// Decodifica il file, applica l'orientamento EXIF e crea la base per le anteprime.
   static Future<PreparedImage> prepare(Uint8List bytes) {
-    return Isolate.run(() {
+    return _run(() {
       final decoded = img.decodeImage(bytes);
       if (decoded == null) {
         throw const FormatException('Formato immagine non supportato');
@@ -50,7 +54,7 @@ class ImageProcessor {
     bool skipCrop = false,
     int maxSide = previewMaxSide,
   }) {
-    return Isolate.run(() {
+    return _run(() {
       final base = img.decodeImage(previewBase)!;
       var out = applyEdits(base, params, skipCrop: skipCrop, skipResize: true);
       out = _fitMax(out, maxSide);
@@ -64,7 +68,7 @@ class ImageProcessor {
     EditParams params, {
     int quality = 90,
   }) {
-    return Isolate.run(() {
+    return _run(() {
       final decoded = img.decodeImage(original)!;
       final base = _flatten(img.bakeOrientation(decoded));
       final out = applyEdits(base, params);
@@ -75,7 +79,7 @@ class ImageProcessor {
 
   /// Miniature di tutti i filtri per il selettore.
   static Future<List<Uint8List>> filterThumbnails(Uint8List previewBase) {
-    return Isolate.run(() {
+    return _run(() {
       final base = _fitMax(img.decodeImage(previewBase)!, 160);
       return [
         for (final f in ImageFilter.values)

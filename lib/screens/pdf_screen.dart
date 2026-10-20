@@ -1,13 +1,18 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:printing/printing.dart';
 
 import '../models/edit_params.dart';
 import '../services/image_processor.dart';
 import '../services/pdf_builder.dart';
+import '../theme.dart';
+import '../widgets/ui.dart';
 
 class PdfScreen extends StatefulWidget {
   const PdfScreen({super.key, required this.items});
@@ -17,20 +22,38 @@ class PdfScreen extends StatefulWidget {
   State<PdfScreen> createState() => _PdfScreenState();
 }
 
+class _PageImage {
+  const _PageImage(this.png, this.aspect);
+  final Uint8List png;
+  final double aspect; // larghezza / altezza
+}
+
 class _PdfScreenState extends State<PdfScreen> {
   PdfSettings _settings = const PdfSettings();
   final _nameCtrl = TextEditingController(text: 'documento');
-  final _progress = ValueNotifier<String>('Preparazione…');
   final Map<String, RenderedImage> _cache = {};
+  final _pageCtrl = PageController(viewportFraction: 0.74);
 
   Uint8List? _pdf;
   PdfSettings? _pdfSettings;
-  String? _sizeInfo;
+  List<_PageImage> _pages = [];
+  int _page = 0;
+  String? _status = 'Preparazione…';
+  String? _error;
+  int _gen = 0;
+  Timer? _debounce;
+
+  @override
+  void initState() {
+    super.initState();
+    _regenerate();
+  }
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _nameCtrl.dispose();
-    _progress.dispose();
+    _pageCtrl.dispose();
     super.dispose();
   }
 
@@ -40,10 +63,15 @@ class _PdfScreenState extends State<PdfScreen> {
     return n.toLowerCase().endsWith('.pdf') ? n : '$n.pdf';
   }
 
-  Future<Uint8List> _buildPdf() async {
-    final s = _settings;
-    if (_pdf != null && _pdfSettings == s) return _pdf!;
+  String _formatSize(int b) {
+    if (b < 1024 * 1024) return '${(b / 1024).toStringAsFixed(0)} KB';
+    return '${(b / (1024 * 1024)).toStringAsFixed(1).replaceAll('.', ',')} MB';
+  }
 
+  // ------------------------------------------------------------ generazione
+
+  Future<Uint8List> _buildPdf(PdfSettings s, {void Function(String)? onStatus}) async {
+    if (_pdf != null && _pdfSettings == s) return _pdf!;
     final images = <RenderedImage>[];
     final items = widget.items;
     for (var i = 0; i < items.length; i++) {
@@ -51,42 +79,92 @@ class _PdfScreenState extends State<PdfScreen> {
       final key = '${it.id}_${it.params.hashCode}_${s.quality}';
       var r = _cache[key];
       if (r == null) {
-        _progress.value = 'Elaboro pagina ${i + 1} di ${items.length}…';
+        onStatus?.call('Elaboro pagina ${i + 1} di ${items.length}…');
         r = await ImageProcessor.renderFull(it.original, it.params,
             quality: s.quality);
         _cache[key] = r;
       }
       images.add(r);
     }
-    _progress.value = 'Creo il PDF…';
+    onStatus?.call('Creo il PDF…');
     final bytes = await PdfBuilder.build(images, s, title: _fileName);
-    if (mounted && s == _settings) {
-      setState(() {
-        _pdf = bytes;
-        _pdfSettings = s;
-        _sizeInfo = _formatSize(bytes.length);
-      });
+    if (s == _settings) {
+      _pdf = bytes;
+      _pdfSettings = s;
     }
     return bytes;
   }
 
-  String _formatSize(int b) {
-    if (b < 1024 * 1024) return '${(b / 1024).toStringAsFixed(0)} KB';
-    return '${(b / (1024 * 1024)).toStringAsFixed(1)} MB';
+  /// Rigenera PDF e miniature delle pagine (con piccolo ritardo per gli slider).
+  void _regenerate({bool debounce = false}) {
+    _debounce?.cancel();
+    _debounce = Timer(Duration(milliseconds: debounce ? 250 : 0), () async {
+      final id = ++_gen;
+      final s = _settings;
+      setState(() {
+        _status = 'Preparazione…';
+        _error = null;
+      });
+      try {
+        final bytes = await _buildPdf(s, onStatus: (t) {
+          if (mounted && id == _gen) setState(() => _status = t);
+        });
+        if (!mounted || id != _gen) return;
+        setState(() => _status = 'Creo l\'anteprima…');
+
+        // Risoluzione delle miniature: ~900 px di larghezza.
+        final dpi = _previewDpi(s);
+        final pages = <_PageImage>[];
+        await for (final r in Printing.raster(bytes, dpi: dpi)) {
+          if (!mounted || id != _gen) return;
+          pages.add(_PageImage(await r.toPng(), r.width / r.height));
+        }
+        if (!mounted || id != _gen) return;
+        setState(() {
+          _pages = pages;
+          _page = math.min(_page, math.max(0, pages.length - 1));
+          _status = null;
+        });
+      } catch (e) {
+        if (mounted && id == _gen) {
+          setState(() {
+            _status = null;
+            _error = '$e';
+          });
+        }
+      }
+    });
+  }
+
+  double _previewDpi(PdfSettings s) {
+    final f = s.size.format;
+    double maxWidthPt;
+    if (f == null) {
+      final maxPx = _cache.values.fold<int>(1, (m, r) => math.max(m, r.width));
+      maxWidthPt = maxPx * 72 / 150;
+    } else {
+      maxWidthPt = math.max(f.width, f.height);
+    }
+    return (72 * 900 / maxWidthPt).clamp(30, 150).toDouble();
   }
 
   void _setSettings(PdfSettings s) {
     if (s == _settings) return;
     setState(() => _settings = s);
+    _regenerate(debounce: true);
   }
+
+  // ------------------------------------------------------------ azioni
 
   void _snack(String msg) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
 
   Future<void> _save() async {
-    final bytes = await _buildPdf();
+    final bytes = await _buildPdf(_settings);
     try {
-      if (Platform.isAndroid || Platform.isIOS) {
+      if (kIsWeb) {
+        await Printing.sharePdf(bytes: bytes, filename: _fileName);
+      } else if (Platform.isAndroid || Platform.isIOS) {
         final path = await FilePicker.platform.saveFile(
           dialogTitle: 'Salva PDF',
           fileName: _fileName,
@@ -108,132 +186,236 @@ class _PdfScreenState extends State<PdfScreen> {
         _snack('Salvato in $out');
       }
     } catch (e) {
-      // Ripiego: foglio di condivisione del sistema (include "Salva su file").
       await Printing.sharePdf(bytes: bytes, filename: _fileName);
     }
   }
 
   Future<void> _share() async {
-    final bytes = await _buildPdf();
+    final bytes = await _buildPdf(_settings);
     await Printing.sharePdf(bytes: bytes, filename: _fileName);
   }
 
   Future<void> _print() async {
-    final bytes = await _buildPdf();
+    final bytes = await _buildPdf(_settings);
     await Printing.layoutPdf(onLayout: (_) async => bytes, name: _fileName);
   }
 
-  void _openSettingsSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSheet) => SafeArea(
-          child: SingleChildScrollView(
-            padding: EdgeInsets.only(
-                bottom: MediaQuery.of(ctx).viewInsets.bottom),
-            child: _SettingsPanel(
-              settings: _settings,
-              nameCtrl: _nameCtrl,
-              onChanged: (s) {
-                _setSettings(s);
-                setSheet(() {});
-              },
+  // ------------------------------------------------------------ UI
+
+  @override
+  Widget build(BuildContext context) {
+    final busy = _status != null;
+    return Scaffold(
+      body: SafeArea(
+        bottom: false,
+        child: LayoutBuilder(builder: (context, cons) {
+          final wide = cons.maxWidth >= 900;
+          final preview = _preview();
+          final settings = _SettingsPanel(
+            settings: _settings,
+            nameCtrl: _nameCtrl,
+            onChanged: _setSettings,
+          );
+          final dock = Padding(
+            padding: EdgeInsets.fromLTRB(
+                16, 10, 16, 16 + MediaQuery.of(context).padding.bottom),
+            child: Row(children: [
+              SquareIconButton(
+                icon: Icons.ios_share_rounded,
+                size: 60,
+                radius: 20,
+                iconSize: 24,
+                color: AppColors.surface2,
+                iconColor: AppColors.primary,
+                tooltip: 'Condividi',
+                onTap: busy ? null : _share,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: GradientButton(
+                  icon: Icons.file_download_outlined,
+                  label: 'Salva PDF',
+                  onTap: busy ? null : _save,
+                ),
+              ),
+            ]),
+          );
+
+          return Column(children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 6, 14, 4),
+              child: Row(children: [
+                SquareIconButton(
+                  icon: Icons.arrow_back_rounded,
+                  tooltip: 'Indietro',
+                  onTap: () => Navigator.pop(context),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text('Anteprima',
+                      style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.text)),
+                ),
+                SquareIconButton(
+                  icon: Icons.print_outlined,
+                  tooltip: 'Stampa',
+                  onTap: busy ? null : _print,
+                ),
+              ]),
             ),
-          ),
-        ),
+            Expanded(
+              child: wide
+                  ? Row(children: [
+                      Expanded(child: preview),
+                      SizedBox(
+                        width: 380,
+                        child: Container(
+                          margin: const EdgeInsets.fromLTRB(0, 8, 16, 0),
+                          decoration: BoxDecoration(
+                            color: AppColors.surface,
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                          child: SingleChildScrollView(child: settings),
+                        ),
+                      ),
+                    ])
+                  : Column(children: [
+                      Expanded(child: preview),
+                      Container(
+                        constraints:
+                            BoxConstraints(maxHeight: cons.maxHeight * 0.42),
+                        decoration: const BoxDecoration(
+                          color: AppColors.surface,
+                          borderRadius:
+                              BorderRadius.vertical(top: Radius.circular(28)),
+                        ),
+                        child: Column(mainAxisSize: MainAxisSize.min, children: [
+                          Container(
+                            width: 40,
+                            height: 5,
+                            margin: const EdgeInsets.only(top: 10, bottom: 2),
+                            decoration: BoxDecoration(
+                              color: AppColors.line,
+                              borderRadius: BorderRadius.circular(9),
+                            ),
+                          ),
+                          Flexible(child: SingleChildScrollView(child: settings)),
+                        ]),
+                      ),
+                    ]),
+            ),
+            ColoredBox(
+              color: wide ? AppColors.bg : AppColors.surface,
+              child: dock,
+            ),
+          ]);
+        }),
       ),
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final preview = PdfPreview(
-      key: ValueKey(_settings),
-      build: (_) => _buildPdf(),
-      useActions: false,
-      canChangePageFormat: false,
-      canChangeOrientation: false,
-      canDebug: false,
-      allowPrinting: false,
-      allowSharing: false,
-      maxPageWidth: 800,
-      pdfFileName: _fileName,
-      loadingWidget: ValueListenableBuilder<String>(
-        valueListenable: _progress,
-        builder: (_, v, __) => Column(mainAxisSize: MainAxisSize.min, children: [
-          const CircularProgressIndicator(),
-          const SizedBox(height: 12),
-          Text(v),
-        ]),
-      ),
-      onError: (context, error) =>
-          Center(child: Text('Errore nella creazione del PDF:\n$error')),
-    );
-
-    return LayoutBuilder(builder: (context, cons) {
-      final wide = cons.maxWidth >= 900;
-      return Scaffold(
-        appBar: AppBar(
-          title: Text(_sizeInfo == null
-              ? 'Anteprima PDF'
-              : 'Anteprima PDF · $_sizeInfo'),
-          actions: [
-            if (!wide)
-              IconButton(
-                tooltip: 'Impostazioni pagina',
-                icon: const Icon(Icons.tune),
-                onPressed: _openSettingsSheet,
-              ),
-          ],
-        ),
-        body: wide
-            ? Row(children: [
-                SizedBox(
-                  width: 340,
-                  child: SingleChildScrollView(
-                    child: _SettingsPanel(
-                      settings: _settings,
-                      nameCtrl: _nameCtrl,
-                      onChanged: _setSettings,
-                    ),
-                  ),
-                ),
-                const VerticalDivider(width: 1),
-                Expanded(child: preview),
-              ])
-            : preview,
-        bottomNavigationBar: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-            child: Row(children: [
-              IconButton.outlined(
-                tooltip: 'Stampa',
-                onPressed: _print,
-                icon: const Icon(Icons.print_outlined),
-              ),
-              const SizedBox(width: 8),
-              IconButton.outlined(
-                tooltip: 'Condividi',
-                onPressed: _share,
-                icon: const Icon(Icons.ios_share),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                      minimumSize: const Size.fromHeight(52)),
-                  onPressed: _save,
-                  icon: const Icon(Icons.save_alt),
-                  label: const Text('Salva PDF'),
-                ),
-              ),
-            ]),
-          ),
+  Widget _preview() {
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text('Errore nella creazione del PDF:\n$_error',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppColors.danger)),
         ),
       );
-    });
+    }
+    final sizeText = _pdf != null && _pdfSettings == _settings
+        ? ' · ≈ ${_formatSize(_pdf!.length)}'
+        : '';
+    return Stack(children: [
+      Column(children: [
+        Expanded(
+          child: _pages.isEmpty
+              ? const SizedBox()
+              : PageView.builder(
+                  controller: _pageCtrl,
+                  itemCount: _pages.length,
+                  onPageChanged: (i) => setState(() => _page = i),
+                  itemBuilder: (context, i) {
+                    final pg = _pages[i];
+                    return AnimatedScale(
+                      duration: const Duration(milliseconds: 220),
+                      scale: i == _page ? 1 : 0.9,
+                      child: AnimatedOpacity(
+                        duration: const Duration(milliseconds: 220),
+                        opacity: i == _page ? 1 : 0.5,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 16),
+                          child: Center(
+                            child: AspectRatio(
+                              aspectRatio: pg.aspect,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(6),
+                                  boxShadow: const [
+                                    BoxShadow(
+                                        color: Color(0xAA000000),
+                                        blurRadius: 30,
+                                        offset: Offset(0, 14)),
+                                  ],
+                                ),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(6),
+                                  child: Image.memory(pg.png,
+                                      fit: BoxFit.fill, gaplessPlayback: true),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+        if (_pages.length > 1)
+          Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            for (var i = 0; i < _pages.length; i++)
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                margin: const EdgeInsets.symmetric(horizontal: 3),
+                width: i == _page ? 20 : 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: i == _page ? AppColors.primary : AppColors.line,
+                  borderRadius: BorderRadius.circular(9),
+                ),
+              ),
+          ]),
+        const SizedBox(height: 8),
+        Text(
+          _pages.isEmpty
+              ? ' '
+              : 'Pagina ${_page + 1} di ${_pages.length}$sizeText',
+          style: const TextStyle(color: AppColors.muted, fontSize: 13),
+        ),
+        const SizedBox(height: 12),
+      ]),
+      if (_status != null)
+        Positioned.fill(
+          child: ColoredBox(
+            color: _pages.isEmpty ? Colors.transparent : const Color(0x990E0F14),
+            child: Center(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 14),
+                Text(_status!,
+                    style: const TextStyle(color: AppColors.textSoft)),
+              ]),
+            ),
+          ),
+        ),
+    ]);
   }
 }
 
@@ -253,8 +435,6 @@ class _SettingsPanel extends StatefulWidget {
 }
 
 class _SettingsPanelState extends State<_SettingsPanel> {
-  // Valori "live" degli slider: si applicano al rilascio per non
-  // rigenerare il PDF ad ogni movimento.
   late double _margin = widget.settings.marginMm;
   late double _quality = widget.settings.quality.toDouble();
 
@@ -268,72 +448,42 @@ class _SettingsPanelState extends State<_SettingsPanel> {
   @override
   Widget build(BuildContext context) {
     final s = widget.settings;
-    final t = Theme.of(context).textTheme;
-    Widget label(String text) => Padding(
-          padding: const EdgeInsets.only(top: 20, bottom: 8),
-          child: Text(text, style: t.titleSmall),
-        );
-
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          label('Nome file'),
-          TextField(
-            controller: widget.nameCtrl,
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              suffixText: '.pdf',
-              isDense: true,
-            ),
-          ),
-          label('Formato pagina'),
+          const SectionLabel('Formato'),
           Wrap(spacing: 8, runSpacing: 8, children: [
             for (final o in PageSizeOption.values)
-              ChoiceChip(
-                label: Text(o.label),
+              AppChip(
+                label: o.label,
                 selected: s.size == o,
-                onSelected: (_) => widget.onChanged(s.copyWith(size: o)),
+                onTap: () => widget.onChanged(s.copyWith(size: o)),
               ),
           ]),
-          label('Orientamento'),
-          SegmentedButton<PageOrientationOption>(
-            segments: const [
-              ButtonSegment(
-                  value: PageOrientationOption.auto,
-                  label: Text('Auto'),
-                  icon: Icon(Icons.auto_mode)),
-              ButtonSegment(
-                  value: PageOrientationOption.portrait,
-                  label: Text('Vert.'),
-                  icon: Icon(Icons.crop_portrait)),
-              ButtonSegment(
-                  value: PageOrientationOption.landscape,
-                  label: Text('Oriz.'),
-                  icon: Icon(Icons.crop_landscape)),
-            ],
-            selected: {s.orientation},
-            onSelectionChanged: s.size == PageSizeOption.fitImage
+          const SectionLabel('Orientamento'),
+          Segmented<PageOrientationOption>(
+            value: s.orientation,
+            onChanged: s.size == PageSizeOption.fitImage
                 ? null
-                : (v) => widget.onChanged(s.copyWith(orientation: v.first)),
-          ),
-          label('Adattamento immagine'),
-          SegmentedButton<FitOption>(
-            segments: const [
-              ButtonSegment(
-                  value: FitOption.contain,
-                  label: Text('Intera'),
-                  icon: Icon(Icons.fit_screen)),
-              ButtonSegment(
-                  value: FitOption.cover,
-                  label: Text('Riempi pagina'),
-                  icon: Icon(Icons.crop_square)),
+                : (v) => widget.onChanged(s.copyWith(orientation: v)),
+            options: const [
+              (PageOrientationOption.auto, 'Auto', Icons.autorenew_rounded),
+              (PageOrientationOption.portrait, 'Vert.', Icons.crop_portrait_rounded),
+              (PageOrientationOption.landscape, 'Oriz.', Icons.crop_landscape_rounded),
             ],
-            selected: {s.fit},
-            onSelectionChanged: (v) => widget.onChanged(s.copyWith(fit: v.first)),
           ),
-          label('Margini: ${_margin.round()} mm'),
+          const SectionLabel('Immagine nella pagina'),
+          Segmented<FitOption>(
+            value: s.fit,
+            onChanged: (v) => widget.onChanged(s.copyWith(fit: v)),
+            options: const [
+              (FitOption.contain, 'Intera', Icons.fit_screen_rounded),
+              (FitOption.cover, 'Riempi pagina', Icons.crop_square_rounded),
+            ],
+          ),
+          SectionLabel('Margini · ${_margin.round()} mm'),
           Slider(
             value: _margin,
             min: 0,
@@ -343,7 +493,7 @@ class _SettingsPanelState extends State<_SettingsPanel> {
             onChanged: (v) => setState(() => _margin = v),
             onChangeEnd: (v) => widget.onChanged(s.copyWith(marginMm: v)),
           ),
-          label('Qualità immagini: ${_quality.round()}%'),
+          SectionLabel('Qualità immagini · ${_quality.round()}%'),
           Slider(
             value: _quality,
             min: 50,
@@ -353,10 +503,21 @@ class _SettingsPanelState extends State<_SettingsPanel> {
             onChanged: (v) => setState(() => _quality = v),
             onChangeEnd: (v) => widget.onChanged(s.copyWith(quality: v.round())),
           ),
-          Text(
-            'Qualità più bassa = file più leggero. Per ridurre ancora usa '
-            '"Dimensione" nell\'editor.',
-            style: t.bodySmall,
+          const SectionLabel('Nome file'),
+          TextField(
+            controller: widget.nameCtrl,
+            style: const TextStyle(color: AppColors.text),
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: AppColors.surface2,
+              isDense: true,
+              suffixText: '.pdf',
+              suffixStyle: const TextStyle(color: AppColors.muted),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: BorderSide.none,
+              ),
+            ),
           ),
         ],
       ),
