@@ -353,7 +353,7 @@ class _PdfScreenState extends State<PdfScreen> {
     final sizeText = _pdf != null && _pdfSettings == _settings
         ? ' · ≈ ${_formatSize(_pdf!.length)}'
         : '';
-    return Stack(children: [
+    return Stack(fit: StackFit.expand, children: [
       Column(children: [
         Expanded(
           child: _pages.isEmpty
