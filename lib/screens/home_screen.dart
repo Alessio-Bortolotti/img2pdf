@@ -136,13 +136,21 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute(builder: (_) => EditorScreen(item: item)),
     );
     if (result == null || result == item.params) return;
-    final thumb = await ImageProcessor.renderPreview(item.previewBase, result,
+    await _applyParams(item, result);
+  }
+
+  /// Rotazione veloce di 90° dal menu, senza aprire l'editor.
+  Future<void> _quickRotate(PageItem item, {required bool clockwise}) =>
+      _applyParams(item,
+          clockwise ? item.params.rotateClockwise() : item.params.rotateCounterClockwise());
+
+  Future<void> _applyParams(PageItem item, EditParams params) async {
+    // Aggiorna subito i parametri; la miniatura arriva appena pronta.
+    setState(() => item.params = params);
+    final thumb = await ImageProcessor.renderPreview(item.previewBase, params,
         maxSide: 480);
-    if (!mounted) return;
-    setState(() {
-      item.params = result;
-      item.thumbnail = thumb.bytes;
-    });
+    if (!mounted || item.params != params) return;
+    setState(() => item.thumbnail = thumb.bytes);
   }
 
   void _openPdf() {
@@ -318,6 +326,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     switch (v) {
                       case 'edit':
                         _edit(item);
+                      case 'rotR':
+                        _quickRotate(item, clockwise: true);
+                      case 'rotL':
+                        _quickRotate(item, clockwise: false);
                       case 'dup':
                         setState(() => _items.insert(i + 1, item.duplicate()));
                       case 'del':
@@ -325,9 +337,47 @@ class _HomeScreenState extends State<HomeScreen> {
                     }
                   },
                   itemBuilder: (_) => const [
-                    PopupMenuItem(value: 'edit', child: Text('Modifica')),
-                    PopupMenuItem(value: 'dup', child: Text('Duplica')),
-                    PopupMenuItem(value: 'del', child: Text('Elimina')),
+                    PopupMenuItem(
+                      value: 'rotR',
+                      child: ListTile(
+                        leading: Icon(Icons.rotate_right),
+                        title: Text('Ruota a destra'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'rotL',
+                      child: ListTile(
+                        leading: Icon(Icons.rotate_left),
+                        title: Text('Ruota a sinistra'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                    PopupMenuDivider(),
+                    PopupMenuItem(
+                      value: 'edit',
+                      child: ListTile(
+                        leading: Icon(Icons.edit_outlined),
+                        title: Text('Modifica'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'dup',
+                      child: ListTile(
+                        leading: Icon(Icons.copy_outlined),
+                        title: Text('Duplica'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'del',
+                      child: ListTile(
+                        leading: Icon(Icons.delete_outline),
+                        title: Text('Elimina'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
                   ],
                 ),
               ]),
